@@ -1,0 +1,434 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "type": "string",
+      "allowedValues": [
+        "West US",
+        "North Europe",
+        "East US",
+        "East Asia",
+        "Southeast Asia"
+      ],
+      "metadata": {
+        "description": "Region where you want to create all the resources"
+      }
+    },
+    "storageAccountType": {
+      "type": "string",
+      "defaultValue": "Premium_LRS",
+      "allowedValues": [
+        "Standard_LRS",
+        "Premium_LRS"
+      ],
+      "metadata": {
+        "description": "Storage account Type. Standard_LRS or Premium_LRS"
+      }
+    },
+    "vmSize": {
+      "type": "string",
+      "defaultValue": "Standard_DS15_V2",
+      "allowedValues": [
+        "Standard_DS2_V2",
+        "Standard_DS15_V2",
+        "Standard_GS4",
+        "Standard_GS5"
+      ],
+      "metadata": {
+        "description": "VM Size"
+      }
+    },
+    "vmNamePattern": {
+      "type": "string",
+      "defaultValue": "MATRIX",
+      "metadata": {
+        "description": "VM Name Pattern; which wil be concatenated with an incremental number"
+      }
+    },
+    "vmSizeDataDisks": {
+      "type": "int",
+      "defaultValue": 1023,
+      "metadata": {
+        "description": "Data disks Size in GBs"
+      }
+    },
+    "serversRole": {
+      "type": "string",
+      "metadata": {
+        "description": "Servers role, for instance webtier, database.A tag will be created with the provided value"
+      }
+    },
+    "serversPurpose": {
+      "type": "string",
+      "defaultValue": "DEV",
+      "metadata": {
+        "description": "Servers purpose, for instance development, test, pre-production, production.A tag will be created with the provided value"
+      }
+    },
+    "imagePublisher": {
+      "type": "string",
+      "defaultValue": "RedHat",
+      "allowedValues": [
+        "Canonical",
+        "OpenLogic",
+        "RedHat"
+      ],
+      "metadata": {
+        "description": "VM Image Publisher"
+      }
+    },
+    "imageOffer": {
+      "type": "string",
+      "defaultValue": "RHEL",
+      "allowedValues": [
+        "UbuntuServer",
+        "CentOS",
+        "RHEL"
+      ],
+      "metadata": {
+        "description": "VM Image Offer"
+      }
+    },
+    "imageSKU": {
+      "type": "string",
+      "defaultValue": "6.7",
+      "allowedValues": [
+        "12.04.5-LTS",
+        "6.5",
+        "6.7"
+      ],
+      "metadata": {
+        "description": "VM Image SKU"
+      }
+    },
+    "numberOfVms": {
+      "type": "int",
+      "defaultValue": 10,
+      "metadata": {
+        "description": "Number of VMs.The template will create N number of identical VMs"
+      }
+    },
+    "adminUserName": {
+      "type": "string",
+      "metadata": {
+        "description": "Admin user name"
+      }
+    },
+    "adminPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Admin password"
+      }
+    },
+    "sshKeyData": {
+      "type": "string",
+      "metadata": {
+        "description": "ssh public key for the admin user"
+      }
+    },
+    "publicIPType": {
+      "type": "string",
+      "allowedValues": [
+        "Static",
+        "Dynamic"
+      ],
+      "defaultValue": "Dynamic",
+      "metadata": {
+        "description": "Public facing IP Type."
+      }
+    },
+    "dnsName": {
+      "type": "string",
+      "metadata": {
+        "description": "Public facing DNS name"
+      }
+    }
+  },
+  "variables": {
+    "vmssApiVersion": "2016-03-30",
+    "lbApiVersion": "2015-06-15",
+    "computeApiVersion": "2015-06-15",
+    "vNetApiVersion": "2015-06-15",
+    "storageApiVersion": "2015-06-15",
+    "publicIPApiVersion": "2015-06-15",
+
+
+    "vmStorageAccountContainerName": "vhds",
+    "availabilitySetName": "Matrix01",
+    "faultDomainCount": "3",
+    "updateDomainCount": "10",
+    "virtualNetworkName": "MatrixVNet",
+    "publicIPName": "VIP01",
+    "VMIPAddressStart": "10.0.2.1",
+    "vmNICNamePattern": "MATRIX",
+    "loadBalancerName": "LB01",
+    "sshNatRuleFrontEndPort": "6400",
+    "sshNatRuleBackEndPort": "22",
+    "sshKeyPath": "[concat('/home/',parameters('adminUsername'),'/.ssh/authorized_keys')]",
+
+    "publicIPRef": "[resourceId('Microsoft.Network/publicIPAddresses',variables('publicIPName'))]",
+    "NICipconfig": "ipCnfgBE",
+    "NICRef": "[resourceId('Microsoft.Network/networkInterfaces',variables('vmNICNamePattern'))]",
+    "DNSNameLB": "[concat(parameters('dnsName'))]",
+    "vnetRef": "[resourceId('Microsoft.Network/virtualNetworks',variables('virtualNetworkName'))]",
+    "subnetBackEndRef": "[concat(variables('vnetRef'),'/subnets/backend')]",
+    "FrontEndRef": "[concat(variables('vnetRef'),'/subnets/')]",
+    "loadBalancerRef": "[resourceId('Microsoft.Network/loadBalancers',variables('loadBalancerName'))]",
+    "lbRuleName": "lbRuleCbAdmin",
+    "lbRuleRef": "[concat(variables('loadBalancerRef'),'/loadBalancingRules/',variables('lbRuleName'))]",
+    "lbFEConfig": "PLBcbaFrontConfg",
+    "lbFEConfigRef": "[concat(variables('loadBalancerRef'),'/frontendIPConfigurations/',variables('lbFEConfig'))]",
+    "lbBEConfig": "[concat('LBBEcbaFrontConfg')]",
+    "lbBEConfigRef": "[concat(variables('loadBalancerRef'),'/backendAddressPools/' ,variables('lbBEConfig'))]",
+    "lbcbaProbe": "cbaLBProbe",
+    "lbcbaProbeRef": "[concat(variables('loadBalancerRef'),'/probes/',variables('lbcbaProbe'))]",
+    "lbExposedPort": 80,
+    "lbcbaIdleTimeOut": 4,
+    "newStorageAccountName": "[parameters('dnsName')]",
+    "storageRef": "[concat('Microsoft.Storage/storageAccounts/', variables('newStorageAccountName'))]"
+  },
+  "resources": [
+    {
+      "apiVersion": "[variables('vNetApiVersion')]",
+      "type": "Microsoft.Network/virtualNetworks",
+      "name": "[variables('virtualNetworkName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "10.0.0.0/16"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "FrontEnd",
+            "properties": {
+              "addressPrefix": "10.0.0.0/27"
+            }
+          },
+          {
+            "name": "Backend",
+            "properties": {
+              "addressPrefix": "10.0.2.0/24"
+            }
+          },
+          {
+            "name": "GatewaySubnet",
+            "properties": {
+              "addressPrefix": "10.0.255.247/29"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "[variables('vNetApiVersion')]",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "[variables('publicIPName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[variables('vnetRef')]"
+      ],
+      "properties": {
+        "publicIPAllocationMethod": "[parameters('publicIPType')]",
+        "dnsSettings": {
+          "domainNameLabel": "[variables('DNSNameLB')]"
+        }
+      }
+    },
+    {
+      "apiVersion": "[variables('vNetApiVersion')]",
+      "type": "Microsoft.Network/loadBalancers",
+      "name": "[variables('loadBalancerName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[variables('publicIPRef')]"
+      ],
+      "properties": {
+        "frontendIPConfigurations": [
+          {
+            "name": "[variables('lbFEConfig')]",
+            "properties": {
+              "publicIPAddress": {
+                "id": "[variables('publicIPRef')]"
+              }
+            }
+          }
+        ],
+        "backendAddressPools": [
+          {
+            "name": "[variables('lbBEConfig')]"
+          }
+        ],
+        "probes": [ ],
+        "loadBalancingRules": [],
+        "inboundNatRules": [
+          {
+            "name": "sshToMatrix",
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[variables('lbFEConfigRef')]"
+              },
+              "protocol": "tcp",
+              "frontendPort": "[concat(variables('sshNatRuleFrontEndPort'),'0')]",
+              "backendPort": "[variables('sshNatRuleBackEndPort')]",
+              "enableFloatingIP": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Compute/availabilitySets",
+      "name": "[variables('availabilitySetName')]",
+      "apiVersion": "[variables('computeApiVersion')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "PlatformFaultDomainCount": "[variables('faultDomainCount')]",
+        "PlatformUpdateDomainCount": "[variables('updateDomainCount')]"
+      }
+    },
+    {
+      "apiVersion": "[variables('storageApiVersion')]",
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "[concat(variables('newStorageAccountName'),copyIndex())]",
+      "location": "[parameters('location')]",
+      "copy": {
+        "name": "StorageLoop",
+        "count": "[parameters('numberOfVMS')]"
+      },
+      "properties": {
+        "accountType": "[parameters('storageAccountType')]"
+      }
+    },
+    {
+      "apiVersion": "[variables('vNetApiVersion')]",
+      "type": "Microsoft.Network/networkInterfaces",
+      "name": "[concat(variables('vmNICNamePattern'),copyIndex())]",
+      "location": "[parameters('location')]",
+      "copy": {
+        "name": "NICSLoop",
+        "count": "[parameters('numberOfVMS')]"
+      },
+      "dependsOn": [
+        "[variables('vnetRef')]",
+        "[variables('loadBalancerRef')]"
+      ],
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "[variables('NICipconfig')]",
+            "properties": {
+              "privateIPAllocationMethod": "Static ",
+              "privateIPAddress": "[concat(variables('VMIPAddressStart'),copyindex())]",
+              "subnet": {
+                "id": "[variables('subnetBackEndRef')]"
+              },
+              "loadBalancerBackendAddressPools": [
+                {
+                  "id": "[variables('lbBEConfigRef')]"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "[variables('computeApiVersion')]",
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "[concat(parameters('vmNamePAttern'),copyIndex())]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "ServerRole": "[parameters('serversRole')]",
+        "ServerEnvironment": "[parameters('serversPurpose')]"
+      },
+      "copy": {
+        "name": "VMsLoop",
+        "count": "[parameters('numberOfVms')]"
+      },
+      "dependsOn": [
+        "StorageLoop",
+        "[concat(variables('NICRef'),copyIndex())]",
+        "[concat('Microsoft.Compute/availabilitySets/', variables('availabilitySetName'))]"
+      ],
+      "properties": {
+        "availabilitySet": {
+          "id": "[resourceId('Microsoft.Compute/availabilitySets', variables('availabilitySetName'))]"
+        },
+        "hardwareProfile": {
+          "vmSize": "[parameters('vmSize')]"
+        },
+        "osProfile": {
+          "computerName": "[concat(parameters('vmNamePAttern'),copyIndex())]",
+          "adminUsername": "[parameters('adminUserName')]",
+          "adminPassword": "[parameters('adminPassword')]",
+          "linuxConfiguration": {
+            "disablePasswordAuthentication": "false",
+            "ssh": {
+              "publicKeys": [
+                {
+                  "path": "[variables('sshKeyPath')]",
+                  "keyData": "[parameters('sshKeyData')]"
+                }
+              ]
+            }
+          }
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[parameters('imagePublisher')]",
+            "offer": "[parameters('imageOffer')]",
+            "sku": "[parameters('imageSKU')]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "[concat(parameters('vmNamePAttern'),copyIndex(), '-OS')]",
+            "vhd": {
+              "uri": "[concat('http://',variables('newStorageAccountName'),copyIndex(),'.blob.core.windows.net/',variables('vmStorageAccountContainerName'),'/',parameters('vmNamePAttern'),copyIndex(),'-OS.vhd')]"
+            },
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          },
+          "dataDisks": [
+            {
+              "name": "[concat(parameters('vmNamePAttern'),copyIndex(), '-Data_1')]",
+              "diskSizeGB": "[parameters('vmSizeDataDisks')]",
+              "lun": 0,
+              "vhd": {
+                "uri": "[concat('http://',variables('newStorageAccountName'),copyIndex(),'.blob.core.windows.net/',variables('vmStorageAccountContainerName'),'/',parameters('vmNamePAttern'),copyIndex(),'-Data_1.vhd')]"
+              },
+              "caching": "ReadOnly",
+              "createOption": "Empty"
+            },
+            {
+              "name": "[concat(parameters('vmNamePAttern'),copyIndex(), '-Data_2')]",
+              "diskSizeGB": "[parameters('vmSizeDataDisks')]",
+              "lun": 1,
+              "vhd": {
+                "uri": "[concat('http://',variables('newStorageAccountName'),copyIndex(),'.blob.core.windows.net/',variables('vmStorageAccountContainerName'),'/',parameters('vmNamePAttern'),copyIndex(),'-Data_2.vhd')]"
+              },
+              "caching": "ReadOnly",
+              "createOption": "Empty"
+            }
+          ]
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[concat(variables('NICRef'),copyIndex())]"
+            }
+          ]
+        }
+      }
+    }
+  
+  ],
+  "outputs": {
+    "sshResourceURL": {
+      "value": "[concat('SSH Url to Ansible :',parameters('adminUserName'),'@', reference(variables('publicIPRef'),providers('Microsoft.Network', 'publicIPAddresses').apiVersions[0]).dnsSettings.fqdn,' -p ',variables('sshNatRuleFrontEndPort'))]",
+      "type": "string"
+    }
+  }
+}

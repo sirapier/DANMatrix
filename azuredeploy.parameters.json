@@ -1,0 +1,27 @@
+  {
+    "$schema": "http://schema.management.azure.com/schemas/2014-04-01-preview/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "location": {
+        "value": "North Europe"
+      },
+      "adminUserName": {
+        "value": ""
+      },
+      "adminPassword": {
+        "value": ""
+      },
+      "dnsName": {
+        "value": ""
+      },
+      "serversRole": {
+        "value": "Matrix"
+      },
+      "vmSize": {
+        "value": "Standard_DS2_V2"
+      }
+
+
+    }
+    
+}
